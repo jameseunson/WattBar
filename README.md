@@ -1,22 +1,22 @@
 <p align="center">
-  <img src="icon/icon-256.png" width="128" alt="WattBar icon — a glassy orange power plug">
+  <img src="icon/icon-256.png" width="128" alt="WattBar icon: a glassy orange power plug">
 </p>
 
 # WattBar
 
-A macOS menu bar app that shows your Mac's live power draw in watts — no sudo required.
+A macOS menu bar app that shows your Mac's live power draw in watts, no sudo required.
 
-Inspired by [mactop](https://github.com/context-labs/mactop) and iStat Menus, but living in the menu bar instead of a terminal.
+WattBar exists mainly because iStat Menus can no longer read power sensors on M5-series Macs. It is inspired by iStat Menus and [mactop](https://github.com/context-labs/mactop), but lives in the menu bar instead of a terminal.
 
 <p align="center">
-  <img src="docs/screenshot.png" width="380" alt="WattBar in the menu bar showing 16.9 W, with the panel open: last-hour average and peak, thermal pressure, power history sparkline, per-component power with CPU/GPU temperatures, estimated per-app power, and adapter/battery draw">
+  <img src="docs/screenshot.png" width="380" alt="WattBar in the menu bar showing 6.6 W, with the panel open: last-hour average and peak, thermal pressure, power history sparkline, per-component power (CPU, GPU, Neural Engine, Memory, Display, Media Engine, Fabric & I/O, Rest of System) with CPU/GPU temperatures, estimated per-app power, and adapter/battery draw">
 </p>
 
 ## Features
 
 - **Live system power** in the menu bar (e.g. `22.5 W`), updating at a configurable interval (0.5s / 1s / 2s / 5s)
-- **Component breakdown**: CPU, GPU, Neural Engine, and Memory power, with CPU/GPU die temperatures, plus a "Rest of System" residual (display, SSD, radios, conversion losses)
-- **Per-app power estimates**: measured CPU package power distributed across apps by their share of machine-wide CPU time — including short-lived child processes like compilers, which roll up into their parent app
+- **Component breakdown**: CPU, GPU, Neural Engine, Memory, Display, Media Engine, and Fabric & I/O power, with CPU/GPU die temperatures, plus a "Rest of System" residual (display backlight, SSD, radios, conversion losses)
+- **Per-app power estimates**: measured CPU package power distributed across apps by their share of machine-wide CPU time, including short-lived child processes like compilers, which roll up into their parent app
 - **Last-hour history**: time-weighted average, peak, and a sparkline chart
 - **Thermal pressure** indicator (Nominal / Fair / Serious / Critical)
 - **Power source** rows: adapter draw and battery draw
@@ -57,6 +57,7 @@ The binary doubles as a command-line probe:
 ```sh
 .build/release/WattBar --probe         # one reading of every power/temp source
 .build/release/WattBar --apps          # per-app power estimate over 2 seconds
+.build/release/WattBar --components    # bucketed component breakdown, as shown in the panel
 .build/release/WattBar --dump          # every raw SMC power sensor
 .build/release/WattBar --login-status  # login item registration state
 ```
