@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="icon/icon-256.png" width="128" alt="WattBar icon — a glassy orange power plug">
+</p>
+
 # WattBar
 
 A macOS menu bar app that shows your Mac's live power draw in watts — no sudo required.
@@ -37,7 +41,7 @@ Tools built on `powermetrics` need root. WattBar reads the same underlying data 
 
 ## Install
 
-Download `WattBar-1.0.zip` from the [latest release](https://github.com/jameseunson/WattBar/releases/latest), unzip, and move `WattBar.app` to `/Applications`. The app is ad-hoc signed (not notarized), so on first launch right-click → **Open** → **Open**, or run `xattr -d com.apple.quarantine WattBar.app`.
+Download the zip from the [latest release](https://github.com/jameseunson/WattBar/releases/latest), unzip, and move `WattBar.app` to `/Applications`. The app is ad-hoc signed (not notarized), so on first launch right-click → **Open** → **Open**, or run `xattr -d com.apple.quarantine WattBar.app`.
 
 ## Build from source
 
