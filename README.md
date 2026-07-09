@@ -59,6 +59,12 @@ The binary doubles as a command-line probe:
 - Time spent in privileged system processes (Spotlight, WindowServer, security daemons) can't be read without root and is reported honestly as "System & Other".
 - E-core and P-core seconds are weighted equally, so light background apps are slightly overestimated relative to heavy P-core work.
 
+## Credits
+
+WattBar was vibecoded: the code was written by [Claude Fable 5](https://www.anthropic.com/news/claude-fable-5-mythos-5) (Anthropic) via Claude Code, with direction, testing, and product decisions by James Eunson. Commits carry a `Co-Authored-By: Claude Fable 5` trailer.
+
+The approach to sudo-free power monitoring was informed by reading the [mactop](https://github.com/context-labs/mactop) source (MIT, Carsen Klock), and the per-app power feature takes its inspiration from iStat Menus.
+
 ## License
 
 MIT
