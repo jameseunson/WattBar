@@ -20,6 +20,10 @@ enum Main {
             apps()
             return
         }
+        if CommandLine.arguments.contains("--components") {
+            components()
+            return
+        }
         LaunchAtLogin.registerIfNeeded()
         WattBarApp.main()
     }
@@ -88,6 +92,24 @@ enum Main {
             print(String(format: "%6.2f W  %@", app.watts, app.name))
         }
         print(String(format: "%6.2f W  [System & Other]", result.otherWatts))
+    }
+
+    /// Prints the bucketed component breakdown exactly as the panel computes
+    /// it, including the Rest of System residual: `WattBar --components`
+    private static func components() {
+        let monitor = PowerMonitor()
+        monitor.stop()
+        Thread.sleep(forTimeInterval: 2.0)
+        monitor.refresh()
+        guard monitor.isAvailable else {
+            print("error: power sensors unavailable")
+            exit(1)
+        }
+        print("System total:", monitor.statusText)
+        for reading in monitor.components {
+            let detail = reading.detail.map { "  (\($0))" } ?? ""
+            print(String(format: "%6.2f W  %@%@", reading.watts, reading.label, detail))
+        }
     }
 
     /// Prints every float-typed "P*" (power) sensor the SMC exposes:

@@ -24,7 +24,9 @@ final class PowerMonitor {
         ("PPBR", "Battery"),
     ]
 
-    private static let componentOrder = ["CPU", "GPU", "Neural Engine", "Memory"]
+    private static let componentOrder = [
+        "CPU", "GPU", "Neural Engine", "Memory", "Display", "Media Engine", "Fabric & I/O",
+    ]
 
     private static let intervalKey = "updateInterval"
     static let intervalOptions: [TimeInterval] = [0.5, 1, 2, 5]
@@ -108,7 +110,8 @@ final class PowerMonitor {
         pollTask = nil
     }
 
-    private func refresh() {
+    /// Internal so the `--components` debug CLI can drive a second sample.
+    func refresh() {
         systemWatts = smc?.readValue(key: "PSTR")
         isAvailable = systemWatts != nil
         if let watts = systemWatts {
@@ -152,6 +155,10 @@ final class PowerMonitor {
     /// (single "CPU Energy", M1-style "ECPU"/"PCPU Energy", Ultra-style
     /// per-die "ANE0"/"DRAM0"/"DRAM1"). GPU SRAM is folded into GPU. Bare
     /// "CPU"/"GPU" channels are fallbacks when no primary channel matched.
+    ///
+    /// Per-cluster CPU channels (PCPU/MCPU/MCPM and their SRAM variants) are
+    /// deliberately unmatched: "CPU Energy" already covers them, and matching
+    /// both would double-count.
     private func componentReadings(from samples: [EnergyModel.ComponentPower]) -> [Reading] {
         var watts: [String: Double] = [:]
         var bareCPU: Double?
@@ -166,8 +173,16 @@ final class PowerMonitor {
                 watts["GPU", default: 0] += sample.watts
             } else if name.hasPrefix("ANE") {
                 watts["Neural Engine", default: 0] += sample.watts
-            } else if name.hasPrefix("DRAM") {
+            } else if name.hasPrefix("DRAM") || name.hasPrefix("DCS") || name.hasPrefix("AMCC") {
                 watts["Memory", default: 0] += sample.watts
+            } else if name.hasPrefix("DISP") {
+                watts["Display", default: 0] += sample.watts
+            } else if name.hasPrefix("ISP") || name.hasPrefix("AVE") || name.hasPrefix("AVD")
+                || name.hasPrefix("MSR") {
+                watts["Media Engine", default: 0] += sample.watts
+            } else if name.hasPrefix("FAB") || name.hasPrefix("AFR")
+                || name.hasPrefix("PCIe Port") || name.hasPrefix("apciec") {
+                watts["Fabric & I/O", default: 0] += sample.watts
             } else if name == "CPU" {
                 bareCPU = sample.watts
             } else if name == "GPU" {
@@ -195,8 +210,8 @@ final class PowerMonitor {
             }
         }
 
-        // Power drawn outside the SoC: display, SSD, radios, fans, and
-        // power-conversion losses.
+        // Power not covered by SoC energy counters: display backlight, SSD
+        // NAND, radios, speakers, fans, and power-conversion losses.
         if let systemWatts {
             let componentSum = readings.reduce(0) { $0 + $1.watts }
             let rest = systemWatts - componentSum

@@ -160,10 +160,24 @@ struct PowerPanelView: View {
         update interval captures more of these.
         • Kernel work.
         """,
+        "Display": """
+        The SoC's display engines, which composite and drive the internal \
+        and external screens. The panel's backlight has no readable power \
+        counter and stays in Rest of System.
+        """,
+        "Media Engine": """
+        Fixed-function media hardware: video encode/decode, the camera \
+        image processor, and the media scaler.
+        """,
+        "Fabric & I/O": """
+        The on-chip interconnect between SoC blocks, plus the PCIe links \
+        to devices like the SSD and Wi-Fi. Covers the links only — the \
+        devices themselves stay in Rest of System.
+        """,
         "_rest": """
-        Power drawn outside the SoC's measured components: display, SSD, \
+        Power with no readable counter: display backlight, SSD, \
         wifi/bluetooth, speakers, fans, and power-conversion losses. \
-        Computed as the system total minus CPU, GPU, Neural Engine, and Memory.
+        Computed as the system total minus every component above.
         """,
     ]
 
