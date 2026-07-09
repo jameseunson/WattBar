@@ -35,7 +35,11 @@ Tools built on `powermetrics` need root. WattBar reads the same underlying data 
 - macOS 15+
 - Xcode command line tools
 
-## Build and run
+## Install
+
+Download `WattBar-1.0.zip` from the [latest release](https://github.com/jameseunson/WattBar/releases/latest), unzip, and move `WattBar.app` to `/Applications`. The app is ad-hoc signed (not notarized), so on first launch right-click → **Open** → **Open**, or run `xattr -d com.apple.quarantine WattBar.app`.
+
+## Build from source
 
 ```sh
 ./build.sh
