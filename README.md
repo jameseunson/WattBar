@@ -4,6 +4,10 @@ A macOS menu bar app that shows your Mac's live power draw in watts — no sudo 
 
 Inspired by [mactop](https://github.com/context-labs/mactop) and iStat Menus, but living in the menu bar instead of a terminal.
 
+<p align="center">
+  <img src="docs/screenshot.png" width="380" alt="WattBar in the menu bar showing 16.9 W, with the panel open: last-hour average and peak, thermal pressure, power history sparkline, per-component power with CPU/GPU temperatures, estimated per-app power, and adapter/battery draw">
+</p>
+
 ## Features
 
 - **Live system power** in the menu bar (e.g. `22.5 W`), updating at a configurable interval (0.5s / 1s / 2s / 5s)
