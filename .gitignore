@@ -1,0 +1,4 @@
+.build/
+.swiftpm/
+WattBar.app/
+.DS_Store
