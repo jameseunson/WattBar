@@ -153,12 +153,15 @@ struct PowerPanelView: View {
 
     private static let rowHelp: [String: String] = [
         "_other": """
-        CPU time WattBar can't attribute to a specific app:
-        • Privileged system processes (Spotlight indexing, WindowServer, \
-        security daemons) — macOS doesn't let unprivileged apps read their usage.
-        • Processes that started and exited between two updates. A shorter \
-        update interval captures more of these.
-        • Kernel work.
+        Power WattBar can't attribute to a specific app, so apps plus this \
+        row add up to the system total:
+        • The machine's fixed baseline: display backlight, SSD, radios, \
+        speakers, and idle conversion losses.
+        • GPU, Neural Engine, and Media Engine power, which have no \
+        per-app counters.
+        • CPU time from privileged system processes (Spotlight indexing, \
+        WindowServer, security daemons), from processes that started and \
+        exited between two updates, and from the kernel.
         """,
         "Display": """
         The SoC's display engines, which composite and drive the internal \

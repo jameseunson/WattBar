@@ -56,7 +56,7 @@ final class PowerMonitor {
             appReadings = []
             hasAppSample = false
             appSampler.reset()
-            _ = appSampler.sample(cpuWatts: nil, topCount: Self.topAppCount)
+            _ = appSampler.sample(budgetWatts: nil, topCount: Self.topAppCount)
             rebuildChartPoints(now: .now)
         }
     }
@@ -74,6 +74,9 @@ final class PowerMonitor {
     private static let maxSampleWeight = 30.0
 
     private var history: [HistorySample] = []
+    /// Rest of System residuals over the same window, used to estimate the
+    /// fixed part of that residual (backlight, SSD, radios) as a floor.
+    private var restHistory: [HistorySample] = []
 
     private let smc = SMC()
     private let energy = EnergyModel()
@@ -131,22 +134,65 @@ final class PowerMonitor {
         }
 
         if isPanelVisible {
-            let cpuWatts = components.first { $0.id == "CPU" }?.watts
-            if let result = appSampler.sample(cpuWatts: cpuWatts, topCount: Self.topAppCount) {
+            if let apps = appSampler.sample(
+                budgetWatts: attributableBudget(), topCount: Self.topAppCount
+            ) {
                 hasAppSample = true
-                var readings = result.apps.map {
+                var readings = apps.map {
                     Reading(id: $0.name, label: $0.name, watts: $0.watts)
                 }
-                if result.otherWatts >= 0.01 {
-                    readings.append(Reading(
-                        id: "_other",
-                        label: "System & Other",
-                        watts: result.otherWatts
-                    ))
+                // Everything not attributed to a listed app, so the section
+                // adds up to the headline total: the fixed Rest of System
+                // floor, GPU/ANE/media/display power, unreadable privileged
+                // processes, and apps below the display threshold.
+                if let systemWatts {
+                    let attributed = apps.reduce(0) { $0 + $1.watts }
+                    let other = systemWatts - attributed
+                    if other >= 0.01 {
+                        readings.append(Reading(
+                            id: "_other",
+                            label: "System & Other",
+                            watts: other
+                        ))
+                    }
                 }
                 appReadings = readings
             }
         }
+    }
+
+    /// The slice of system power plausibly caused by app activity, to be
+    /// split by CPU-time share: CPU package, memory, and fabric power all
+    /// track the work apps do, as does the part of the Rest of System
+    /// residual above its idle floor (dominated by power-conversion losses,
+    /// which scale with SoC draw, plus SSD activity). GPU, Neural Engine,
+    /// and Media Engine are excluded: CPU time is a poor proxy for them,
+    /// so their power stays in the remainder.
+    private func attributableBudget() -> Double? {
+        var budget: Double?
+        for reading in components {
+            switch reading.id {
+            case "CPU", "Memory", "Fabric & I/O":
+                budget = (budget ?? 0) + reading.watts
+            case "_rest":
+                if let floor = restFloor {
+                    budget = (budget ?? 0) + max(0, reading.watts - floor)
+                }
+            default:
+                break
+            }
+        }
+        return budget
+    }
+
+    /// Fixed part of Rest of System: a low percentile of the residuals seen
+    /// over the last hour. A percentile rather than the minimum, so a single
+    /// noisy dip (the SMC total and the energy counters are sampled at
+    /// slightly different moments) doesn't drag the floor down.
+    private var restFloor: Double? {
+        guard !restHistory.isEmpty else { return nil }
+        let sorted = restHistory.map(\.watts).sorted()
+        return sorted[Int(Double(sorted.count - 1) * 0.1)]
     }
 
     /// Buckets Energy Model channels into display components using
@@ -215,11 +261,21 @@ final class PowerMonitor {
         if let systemWatts {
             let componentSum = readings.reduce(0) { $0 + $1.watts }
             let rest = systemWatts - componentSum
+            recordRest(max(0, rest))
             if rest > 0.05 {
                 readings.append(Reading(id: "_rest", label: "Rest of System", watts: rest))
             }
         }
         return readings
+    }
+
+    private func recordRest(_ watts: Double) {
+        let now = ContinuousClock.now
+        restHistory.append(HistorySample(time: now, watts: watts))
+        let cutoff = now - Self.historyWindow
+        if let firstValid = restHistory.firstIndex(where: { $0.time >= cutoff }) {
+            restHistory.removeFirst(firstValid)
+        }
     }
 
     /// Appends a sample, drops entries older than the window, and updates

@@ -1,23 +1,20 @@
 import Darwin
 import Foundation
 
-/// Estimates per-app power with a budget model: the measured CPU package
-/// power is distributed across apps in proportion to each one's share of
-/// machine-wide CPU time since the previous sample.
+/// Estimates per-app power with a budget model: a caller-supplied watt
+/// budget (the activity-driven share of system power) is distributed
+/// across apps in proportion to each one's share of machine-wide CPU
+/// time since the previous sample.
 ///
 /// Per-process CPU time covers every readable process — including bare CLI
 /// children like compilers, which the kernel's billed-energy counter misses
 /// entirely. Time spent in processes we cannot read (root daemons, kernel)
-/// is reported separately as `otherWatts` rather than smeared across apps.
+/// keeps its share of the budget unattributed rather than being smeared
+/// across apps; the caller reports it as part of the remainder.
 final class AppPowerSampler {
     struct AppPower {
         let name: String
         let watts: Double
-    }
-
-    struct Result {
-        let apps: [AppPower]
-        let otherWatts: Double
     }
 
     /// Converts ri_user_time/ri_system_time mach time units to seconds.
@@ -56,10 +53,10 @@ final class AppPowerSampler {
         deadChildCredits = [:]
     }
 
-    /// Distributes `cpuWatts` (measured CPU package power) across the top
-    /// apps by CPU-time share. Returns nil on the first call after a reset
-    /// (no interval to compare against) or when `cpuWatts` is unavailable.
-    func sample(cpuWatts: Double?, topCount: Int) -> Result? {
+    /// Distributes `budgetWatts` across the top apps by CPU-time share.
+    /// Returns nil on the first call after a reset (no interval to compare
+    /// against) or when `budgetWatts` is unavailable.
+    func sample(budgetWatts: Double?, topCount: Int) -> [AppPower]? {
         let procs = sweepProcs()
         let busyTicks = Self.totalBusyTicks()
         let now = ContinuousClock.now
@@ -76,7 +73,7 @@ final class AppPowerSampler {
 
         guard let previousBusyTicks, busyTicks > previousBusyTicks,
               let previousSweepTime,
-              let cpuWatts
+              let budgetWatts
         else { return nil }
         let busySeconds = Double(busyTicks - previousBusyTicks) / Self.ticksPerSecond
 
@@ -134,15 +131,12 @@ final class AppPowerSampler {
         let totalSeconds = max(busySeconds, accountedSeconds)
         guard totalSeconds > 0 else { return nil }
 
-        let apps = secondsByApp
-            .map { AppPower(name: $0.key, watts: cpuWatts * $0.value / totalSeconds) }
+        return secondsByApp
+            .map { AppPower(name: $0.key, watts: budgetWatts * $0.value / totalSeconds) }
             .filter { $0.watts >= 0.01 }
             .sorted { $0.watts > $1.watts }
             .prefix(topCount)
             .map { $0 }
-
-        let otherWatts = cpuWatts * (totalSeconds - accountedSeconds) / totalSeconds
-        return Result(apps: apps, otherWatts: max(0, otherWatts))
     }
 
     private func sweepProcs() -> [pid_t: ProcSnapshot] {

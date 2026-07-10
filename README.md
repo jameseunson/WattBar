@@ -16,7 +16,7 @@ WattBar exists mainly because iStat Menus can no longer read power sensors on M5
 
 - **Live system power** in the menu bar (e.g. `22.5 W`), updating at a configurable interval (0.5s / 1s / 2s / 5s)
 - **Component breakdown**: CPU, GPU, Neural Engine, Memory, Display, Media Engine, and Fabric & I/O power, with CPU/GPU die temperatures, plus a "Rest of System" residual (display backlight, SSD, radios, conversion losses)
-- **Per-app power estimates**: measured CPU package power distributed across apps by their share of machine-wide CPU time, including short-lived child processes like compilers, which roll up into their parent app
+- **Per-app power estimates**: the activity-driven share of system power (CPU, memory, fabric, and load-dependent overhead) distributed across apps by their share of machine-wide CPU time, including short-lived child processes like compilers, which roll up into their parent app. Apps plus "System & Other" add up to the system total.
 - **Last-hour history**: time-weighted average, peak, and a sparkline chart
 - **Thermal pressure** indicator (Nominal / Fair / Serious / Critical)
 - **Power source** rows: adapter draw and battery draw
@@ -31,7 +31,7 @@ Tools built on `powermetrics` need root. WattBar reads the same underlying data 
 | System / adapter / battery power | SMC keys (`PSTR`, `PDTR`, `PPBR`) via IOKit |
 | CPU / GPU / ANE / DRAM power | IOReport "Energy Model" energy counters |
 | CPU / GPU temperature | SMC `Tp*` / `Te*` / `Tg*` sensor keys |
-| Per-app attribution | `proc_pid_rusage` CPU time + child-reap counters, budgeted against measured CPU package power |
+| Per-app attribution | `proc_pid_rusage` CPU time + child-reap counters, budgeted against the measured activity-driven power (CPU, memory, fabric, load-dependent overhead) |
 
 ## Requirements
 
@@ -64,8 +64,10 @@ The binary doubles as a command-line probe:
 
 ## Accuracy notes
 
-- Per-app figures budget **CPU package power only**; they intentionally sum to the CPU component, not the system total.
-- Time spent in privileged system processes (Spotlight, WindowServer, security daemons) can't be read without root and is reported honestly as "System & Other".
+- Per-app figures budget the **activity-driven share of system power**: CPU package, memory, and fabric power, plus the part of "Rest of System" above its idle floor (mostly power-conversion losses, which scale with load). The floor is estimated as a low percentile of the last hour of residuals.
+- Memory, fabric, and overhead are split by CPU-time share, a proxy for the actual per-app traffic.
+- GPU, Neural Engine, and Media Engine power has no per-app counter and stays in "System & Other", so GPU-heavy apps are underestimated.
+- "System & Other" is the remainder against the system total: the fixed baseline (backlight, SSD, radios), unattributable component power, and CPU time from privileged system processes (Spotlight, WindowServer, security daemons) that can't be read without root. Apps plus this row add up to the headline figure.
 - E-core and P-core seconds are weighted equally, so light background apps are slightly overestimated relative to heavy P-core work.
 
 ## Credits

@@ -70,28 +70,22 @@ enum Main {
         print("autoRegistered:", UserDefaults.standard.bool(forKey: "didAutoRegisterLoginItem"))
     }
 
-    /// Prints estimated per-app power over a 2-second window:
-    /// `WattBar --apps`
+    /// Prints estimated per-app power over a 2-second window, using the
+    /// same budget-and-remainder path as the panel: `WattBar --apps`
     private static func apps() {
-        guard let energy = EnergyModel() else {
-            print("error: Energy Model unavailable")
+        let monitor = PowerMonitor()
+        monitor.stop()
+        monitor.isPanelVisible = true
+        Thread.sleep(forTimeInterval: 2.0)
+        monitor.refresh()
+        guard monitor.hasAppSample else {
+            print("error: no sample")
             exit(1)
         }
-        let sampler = AppPowerSampler()
-        _ = energy.sample()
-        _ = sampler.sample(cpuWatts: nil, topCount: 10)
-        Thread.sleep(forTimeInterval: 2.0)
-        let cpuWatts = energy.sample()?
-            .first { $0.name == "CPU Energy" || $0.name == "CPU" }?.watts
-        print("CPU package:", cpuWatts.map { String(format: "%.2f W", $0) } ?? "unavailable")
-        guard let result = sampler.sample(cpuWatts: cpuWatts, topCount: 10) else {
-            print("error: no sample")
-            return
+        print("System total:", monitor.statusText)
+        for reading in monitor.appReadings {
+            print(String(format: "%6.2f W  %@", reading.watts, reading.label))
         }
-        for app in result.apps {
-            print(String(format: "%6.2f W  %@", app.watts, app.name))
-        }
-        print(String(format: "%6.2f W  [System & Other]", result.otherWatts))
     }
 
     /// Prints the bucketed component breakdown exactly as the panel computes
