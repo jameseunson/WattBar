@@ -79,6 +79,7 @@ final class PowerMonitor {
     private var restHistory: [HistorySample] = []
 
     private let smc = SMC()
+    private let battery = BatteryInfo()
     private let energy = EnergyModel()
     private let appSampler = AppPowerSampler()
     private let temperatures: TemperatureSensors?
@@ -125,6 +126,19 @@ final class PowerMonitor {
             smc?.readValue(key: channel.key).map {
                 Reading(id: channel.key, label: channel.label, watts: $0)
             }
+        }
+
+        // While charging, PPBR (power drawn from the battery) reads near
+        // zero, leaving the adapter's extra output unexplained. Show the
+        // charge inflow instead, flagged so the panel can annotate it.
+        if let state = battery?.read(), state.isCharging,
+           let index = sources.firstIndex(where: { $0.id == "PPBR" }) {
+            sources[index] = Reading(
+                id: "PPBR",
+                label: "Battery",
+                watts: state.chargeWatts,
+                detail: "charging"
+            )
         }
 
         thermalState = ProcessInfo.processInfo.thermalState

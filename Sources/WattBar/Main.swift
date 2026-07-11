@@ -43,6 +43,15 @@ enum Main {
             }
         }
 
+        if let state = BatteryInfo()?.read() {
+            let status = state.isCharging
+                ? String(format: "charging at %.2f W", state.chargeWatts)
+                : "not charging"
+            print("battery: \(status)")
+        } else {
+            print("battery: unavailable")
+        }
+
         let temperatures = TemperatureSensors(smc: smc)
         let format = { (value: Double?) in
             value.map { String(format: "%.1f°C", $0) } ?? "unavailable"

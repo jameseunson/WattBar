@@ -182,6 +182,15 @@ struct PowerPanelView: View {
         wifi/bluetooth, speakers, fans, and power-conversion losses. \
         Computed as the system total minus every component above.
         """,
+        "PDTR": """
+        Total power delivered by the power adapter. While the battery is \
+        charging this includes the charge power, so it can be much higher \
+        than system power.
+        """,
+        "PPBR": """
+        Power drawn from the battery to run the system. While the battery \
+        is charging, shows the power flowing into it instead.
+        """,
     ]
 
     private func readingGrid(_ readings: [PowerMonitor.Reading]) -> some View {
