@@ -346,6 +346,18 @@ struct HistoryStatsTests {
             PowerSample(time: start.advanced(by: .seconds(20)), watts: 3),
         ]
         PowerMath.trim(&history, before: start.advanced(by: .seconds(10)))
+        // The sample exactly at the cutoff is kept.
         #expect(history.map(\.watts) == [2, 3])
+    }
+
+    @Test("a history that is entirely older than the cutoff is emptied")
+    func trimmingDropsAnEntirelyExpiredHistory() {
+        let start = ContinuousClock.now
+        var history = [
+            PowerSample(time: start, watts: 1),
+            PowerSample(time: start.advanced(by: .seconds(10)), watts: 2),
+        ]
+        PowerMath.trim(&history, before: start.advanced(by: .seconds(3600)))
+        #expect(history.isEmpty)
     }
 }

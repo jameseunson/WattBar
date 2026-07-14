@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 import Testing
 @testable import WattBarCore
 
@@ -197,10 +198,12 @@ struct AppPowerAttributorTests {
     func namesAreCached() {
         let attributor = makeAttributor()
         // A resolver that would give a different answer if called twice.
-        nonisolated(unsafe) var calls = 0
+        let calls = Mutex(0)
         let counting: (pid_t) -> String = { _ in
-            calls += 1
-            return "call\(calls)"
+            calls.withLock { count in
+                count += 1
+                return "call\(count)"
+            }
         }
         _ = attributor.attribute(
             procs: [100: proc(own: 0)], busyTicks: 0, now: at(0),
@@ -216,7 +219,7 @@ struct AppPowerAttributorTests {
         ))
         #expect(first[0].name == "call1")
         #expect(second[0].name == "call1")
-        #expect(calls == 1)
+        #expect(calls.withLock { $0 } == 1)
     }
 
     @Test("reset clears the name cache, so a reused pid does not inherit the old app's name")

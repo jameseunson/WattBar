@@ -238,8 +238,9 @@ public enum PowerMath {
 
     /// Drops samples older than `window`, in place.
     public static func trim(_ samples: inout [PowerSample], before cutoff: ContinuousClock.Instant) {
-        if let firstValid = samples.firstIndex(where: { $0.time >= cutoff }) {
-            samples.removeFirst(firstValid)
-        }
+        // endIndex, not nil-means-keep: when every sample predates the cutoff
+        // there is no first valid one, and the whole history goes.
+        let firstValid = samples.firstIndex { $0.time >= cutoff } ?? samples.endIndex
+        samples.removeSubrange(..<firstValid)
     }
 }
