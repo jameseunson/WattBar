@@ -5,6 +5,7 @@ struct PowerPanelView: View {
     @Bindable var monitor: PowerMonitor
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var launchAtLoginError: String?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -14,7 +15,8 @@ struct PowerPanelView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(monitor.statusText)
-                        .font(.system(size: 28, weight: .semibold))
+                        .font(.title)
+                        .fontWeight(.semibold)
                         .monospacedDigit()
                         .contentTransition(.numericText())
                     if let average = monitor.averageWatts, let peak = monitor.peakWatts {
@@ -59,7 +61,7 @@ struct PowerPanelView: View {
             .keyboardShortcut("q")
         }
         .padding(14)
-        .frame(width: 250, alignment: .leading)
+        .frame(minWidth: 250, idealWidth: 280, alignment: .leading)
         .onAppear {
             monitor.isPanelVisible = true
             // Resync: the login item can be changed in System Settings while
@@ -251,7 +253,9 @@ struct PowerPanelView: View {
         HStack(spacing: 4) {
             Text(reading.label)
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
+                // One line keeps the grid tidy, but at accessibility sizes a
+                // single line truncates most app names to nothing readable.
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                 .truncationMode(.tail)
             if let help = Self.rowHelp[reading.id] {
                 Image(systemName: "info.circle")
