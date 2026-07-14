@@ -32,11 +32,28 @@ actor SensorSampler {
 
     private static let historyWindow: Duration = .seconds(3600)
 
-    private let smc: SMC?
-    private let battery: BatteryInfo?
-    private let energy: EnergyModel?
-    private let appSampler = AppPowerSampler()
-    private let temperatures: TemperatureSensors?
+    /// Every hardware handle, constructed together on first use. Opening the
+    /// SMC and IOKit services and scanning every SMC key for temperature
+    /// sensors costs the better part of a second, and an actor's initializer
+    /// runs on whichever thread created it, which for PowerMonitor is the main
+    /// one. Building them here instead keeps that cost on the actor's executor.
+    private struct Resources {
+        let smc: SMC?
+        let battery: BatteryInfo?
+        let energy: EnergyModel?
+        let temperatures: TemperatureSensors?
+        let appSampler = AppPowerSampler()
+
+        init() {
+            let smc = SMC()
+            self.smc = smc
+            battery = BatteryInfo()
+            energy = EnergyModel()
+            temperatures = smc.map(TemperatureSensors.init)
+        }
+    }
+
+    private var resources: Resources?
 
     /// Previous instantaneous system total, for interval alignment.
     private var previousSystemWatts: Double?
@@ -50,25 +67,30 @@ actor SensorSampler {
     /// fixed part of that residual (backlight, SSD, radios) as a floor.
     private var restHistory: [PowerSample] = []
 
-    init() {
-        let smc = SMC()
-        self.smc = smc
-        battery = BatteryInfo()
-        energy = EnergyModel()
-        temperatures = smc.map(TemperatureSensors.init)
+    init() {}
+
+    /// Cheap after the first call: the handles are opened once and kept.
+    private func loadResources() -> Resources {
+        if let resources { return resources }
+        let created = Resources()
+        resources = created
+        return created
     }
 
     func snapshot(includeApps: Bool, topCount: Int) -> PowerSnapshot {
-        let systemWatts = smc?.readValue(key: "PSTR")
+        let resources = loadResources()
+        let systemWatts = resources.smc?.readValue(key: "PSTR")
         let intervalSystemWatts = PowerMath.intervalAverage(
             current: systemWatts, previous: previousSystemWatts
         )
         previousSystemWatts = systemWatts
 
         var components: ComponentBreakdown?
-        if let samples = energy?.sample() {
+        if let samples = resources.energy?.sample() {
             let breakdown = componentReadings(
-                from: samples, intervalSystemWatts: intervalSystemWatts
+                from: samples,
+                intervalSystemWatts: intervalSystemWatts,
+                temperatures: resources.temperatures
             )
             components = breakdown
             if let breakdown {
@@ -83,14 +105,14 @@ actor SensorSampler {
                 restFloor: PowerMath.restFloor(restHistory.map(\.watts)),
                 intervalSystemWatts: intervalSystemWatts
             )
-            apps = appSampler.sample(budgetWatts: budget, topCount: topCount)
+            apps = resources.appSampler.sample(budgetWatts: budget, topCount: topCount)
         }
 
         return PowerSnapshot(
             systemWatts: systemWatts,
             intervalSystemWatts: intervalSystemWatts,
             isAvailable: systemWatts != nil,
-            sources: readSources(),
+            sources: readSources(resources),
             components: components,
             apps: apps
         )
@@ -100,13 +122,14 @@ actor SensorSampler {
     /// next snapshot has an interval to compare against rather than an average
     /// over however long sampling was paused.
     func resetAppBaseline(topCount: Int) {
-        appSampler.reset()
-        _ = appSampler.sample(budgetWatts: nil, topCount: topCount)
+        let resources = loadResources()
+        resources.appSampler.reset()
+        _ = resources.appSampler.sample(budgetWatts: nil, topCount: topCount)
     }
 
-    private func readSources() -> [PowerReading] {
+    private func readSources(_ resources: Resources) -> [PowerReading] {
         var sources = Self.sourceChannels.compactMap { channel in
-            smc?.readValue(key: channel.key).map {
+            resources.smc?.readValue(key: channel.key).map {
                 PowerReading(id: channel.key, label: channel.label, watts: $0)
             }
         }
@@ -114,7 +137,7 @@ actor SensorSampler {
         // While charging, PPBR (power drawn from the battery) reads near
         // zero, leaving the adapter's extra output unexplained. Show the
         // charge inflow instead, flagged so the panel can annotate it.
-        if let state = battery?.read(), state.isCharging,
+        if let state = resources.battery?.read(), state.isCharging,
            let index = sources.firstIndex(where: { $0.id == "PPBR" }) {
             sources[index] = PowerReading(
                 id: "PPBR",
@@ -127,7 +150,9 @@ actor SensorSampler {
     }
 
     private func componentReadings(
-        from samples: [ComponentSample], intervalSystemWatts: Double?
+        from samples: [ComponentSample],
+        intervalSystemWatts: Double?,
+        temperatures: TemperatureSensors?
     ) -> ComponentBreakdown? {
         let watts = PowerMath.bucketComponents(samples)
         let cpuTemp = temperatures?.cpuCelsius
