@@ -40,12 +40,16 @@ final class AppPowerSampler {
     private var nameCache: [pid_t: String] = [:]
 
     /// Discards history so the next sample() is a fresh baseline rather than
-    /// an average over however long sampling was paused.
+    /// an average over however long sampling was paused. The name cache goes
+    /// too: while sampling was paused a process can have exited and its pid
+    /// been reused, which would otherwise give the new process the old app's
+    /// name. (While sampling is live, the per-sweep pruning below handles it.)
     func reset() {
-        previousProcs = [:]
+        previousProcs.removeAll(keepingCapacity: true)
         previousBusyTicks = nil
         previousSweepTime = nil
-        deadChildCredits = [:]
+        deadChildCredits.removeAll(keepingCapacity: true)
+        nameCache.removeAll(keepingCapacity: true)
     }
 
     /// Distributes `budgetWatts` across the top apps by CPU-time share.
