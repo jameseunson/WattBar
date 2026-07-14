@@ -4,6 +4,7 @@ import SwiftUI
 struct PowerPanelView: View {
     @Bindable var monitor: PowerMonitor
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
+    @State private var launchAtLoginError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -50,10 +51,7 @@ struct PowerPanelView: View {
             }
             .font(.callout)
 
-            Toggle("Launch at Login", isOn: $launchAtLogin)
-                .onChange(of: launchAtLogin) { _, newValue in
-                    LaunchAtLogin.set(enabled: newValue)
-                }
+            launchAtLoginToggle
 
             Button("Quit WattBar") {
                 NSApplication.shared.terminate(nil)
@@ -62,8 +60,42 @@ struct PowerPanelView: View {
         }
         .padding(14)
         .frame(width: 250, alignment: .leading)
-        .onAppear { monitor.isPanelVisible = true }
+        .onAppear {
+            monitor.isPanelVisible = true
+            // Resync: the login item can be changed in System Settings while
+            // WattBar is running.
+            launchAtLogin = LaunchAtLogin.isEnabled
+        }
         .onDisappear { monitor.isPanelVisible = false }
+    }
+
+    private var launchAtLoginToggle: some View {
+        Toggle("Launch at Login", isOn: $launchAtLogin)
+            .onChange(of: launchAtLogin) { _, newValue in
+                // Both the revert below and the onAppear resync write to
+                // launchAtLogin, which re-fires this handler. Only act when
+                // the new value disagrees with the system, so a write that
+                // merely mirrors reality doesn't loop back into set().
+                guard newValue != LaunchAtLogin.isEnabled else { return }
+                do {
+                    try LaunchAtLogin.set(enabled: newValue)
+                } catch {
+                    launchAtLoginError = error.localizedDescription
+                    launchAtLogin = LaunchAtLogin.isEnabled
+                }
+            }
+            .alert("Could not update login item", isPresented: .init(
+                get: { launchAtLoginError != nil },
+                set: { if !$0 { launchAtLoginError = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text((launchAtLoginError ?? "") + """
+
+                    If approval is required, allow WattBar in System Settings > \
+                    General > Login Items.
+                    """)
+            }
     }
 
     private var sparkline: some View {

@@ -7,15 +7,14 @@ enum LaunchAtLogin {
         SMAppService.mainApp.status == .enabled
     }
 
-    static func set(enabled: Bool) {
-        do {
-            if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-        } catch {
-            NSLog("LaunchAtLogin: %@", error.localizedDescription)
+    /// Throws when the registration fails, most commonly because the login
+    /// item needs approval in System Settings. The caller has to surface that:
+    /// swallowing it leaves the toggle showing a state that isn't real.
+    static func set(enabled: Bool) throws {
+        if enabled {
+            try SMAppService.mainApp.register()
+        } else {
+            try SMAppService.mainApp.unregister()
         }
     }
 
@@ -31,8 +30,13 @@ enum LaunchAtLogin {
               !UserDefaults.standard.bool(forKey: didAutoRegisterKey)
         else { return }
         UserDefaults.standard.set(true, forKey: didAutoRegisterKey)
-        if !isEnabled {
-            set(enabled: true)
+        guard !isEnabled else { return }
+        do {
+            try set(enabled: true)
+        } catch {
+            // Nothing to surface this to at launch; the panel's toggle shows
+            // the real state when it opens.
+            NSLog("LaunchAtLogin: %@", error.localizedDescription)
         }
     }
 }
