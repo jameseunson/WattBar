@@ -1,4 +1,5 @@
 import Foundation
+import WattBarCore
 
 // libIOReport is a private but stable system library (linked via its SDK
 // stub). It exposes the SoC "Energy Model" counters — per-component energy

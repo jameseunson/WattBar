@@ -1,5 +1,6 @@
 import Foundation
 import IOKit
+import WattBarCore
 
 /// Minimal client for the Apple System Management Controller (SMC).
 ///
@@ -88,7 +89,7 @@ final class SMC {
 
     /// Reads a sensor key and decodes it as a power/scalar value.
     func readValue(key: String) -> Double? {
-        guard let keyCode = Self.fourCC(key) else { return nil }
+        guard let keyCode = SMCCodec.fourCC(key) else { return nil }
 
         var infoRequest = SMCParamStruct()
         infoRequest.key = keyCode
@@ -103,8 +104,8 @@ final class SMC {
 
         let size = Int(info.keyInfo.dataSize)
         let bytes = withUnsafeBytes(of: response.bytes) { Array($0.prefix(size)) }
-        let type = Self.fourCCString(info.keyInfo.dataType)
-        return Self.decode(bytes: bytes, type: type)
+        let type = SMCCodec.fourCCString(info.keyInfo.dataType)
+        return SMCCodec.decode(bytes: bytes, type: type)
     }
 
     /// All keys the SMC exposes on this machine, via the key-at-index command.
@@ -115,18 +116,18 @@ final class SMC {
             input.data8 = Command.getKeyFromIndex.rawValue
             input.data32 = UInt32(index)
             guard let output = call(&input) else { return nil }
-            return Self.fourCCString(output.key)
+            return SMCCodec.fourCCString(output.key)
         }
     }
 
     /// The four-character data type of a key (e.g. "flt ", "ui16").
     func typeOf(key: String) -> String? {
-        guard let keyCode = Self.fourCC(key) else { return nil }
+        guard let keyCode = SMCCodec.fourCC(key) else { return nil }
         var input = SMCParamStruct()
         input.key = keyCode
         input.data8 = Command.getKeyInfo.rawValue
         guard let info = call(&input) else { return nil }
-        return Self.fourCCString(info.keyInfo.dataType)
+        return SMCCodec.fourCCString(info.keyInfo.dataType)
     }
 
     private func call(_ input: inout SMCParamStruct) -> SMCParamStruct? {
@@ -142,37 +143,5 @@ final class SMC {
         )
         guard status == kIOReturnSuccess, output.result == 0 else { return nil }
         return output
-    }
-
-    private static func decode(bytes: [UInt8], type: String) -> Double? {
-        switch type {
-        case "flt " where bytes.count >= 4:
-            let raw = bytes.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }
-            return Double(Float(bitPattern: UInt32(littleEndian: raw)))
-        case "sp78" where bytes.count >= 2:
-            let raw = Int16(bitPattern: UInt16(bytes[0]) << 8 | UInt16(bytes[1]))
-            return Double(raw) / 256.0
-        case "ui8 " where bytes.count >= 1:
-            return Double(bytes[0])
-        case "ui16" where bytes.count >= 2:
-            return Double(UInt16(bytes[0]) << 8 | UInt16(bytes[1]))
-        case "ui32" where bytes.count >= 4:
-            return Double(bytes[0...3].reduce(UInt32(0)) { $0 << 8 | UInt32($1) })
-        default:
-            return nil
-        }
-    }
-
-    private static func fourCC(_ key: String) -> UInt32? {
-        let scalars = Array(key.unicodeScalars)
-        guard scalars.count == 4, scalars.allSatisfy({ $0.isASCII }) else { return nil }
-        return scalars.reduce(UInt32(0)) { $0 << 8 | UInt32($1.value) }
-    }
-
-    private static func fourCCString(_ value: UInt32) -> String {
-        let characters = stride(from: 24, through: 0, by: -8).map {
-            Character(UnicodeScalar(UInt8((value >> UInt32($0)) & 0xFF)))
-        }
-        return String(characters)
     }
 }

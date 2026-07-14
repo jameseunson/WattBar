@@ -1,4 +1,5 @@
 import Foundation
+import WattBarCore
 
 /// One complete reading of the machine, as a value that can cross actor
 /// boundaries. `systemWatts` stays instantaneous because the headline is a

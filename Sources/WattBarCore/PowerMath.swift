@@ -1,40 +1,62 @@
 import Foundation
 
 /// One row of the panel: a component, a power source, or an app.
-struct PowerReading: Identifiable, Sendable {
-    let id: String
-    let label: String
-    let watts: Double
-    var detail: String? = nil
+public struct PowerReading: Identifiable, Sendable {
+    public let id: String
+    public let label: String
+    public let watts: Double
+    public var detail: String?
+
+    public init(id: String, label: String, watts: Double, detail: String? = nil) {
+        self.id = id
+        self.label = label
+        self.watts = watts
+        self.detail = detail
+    }
 }
 
 /// A raw Energy Model channel: the counter name as IOReport reports it, and
 /// its average power over the sampling interval.
-struct ComponentSample: Sendable {
-    let name: String
-    let watts: Double
+public struct ComponentSample: Sendable {
+    public let name: String
+    public let watts: Double
+
+    public init(name: String, watts: Double) {
+        self.name = name
+        self.watts = watts
+    }
 }
 
 /// A share of the attributable budget assigned to one app.
-struct AppPower: Sendable {
-    let name: String
-    let watts: Double
+public struct AppPower: Sendable {
+    public let name: String
+    public let watts: Double
+
+    public init(name: String, watts: Double) {
+        self.name = name
+        self.watts = watts
+    }
 }
 
 /// One point of power history.
-struct PowerSample: Sendable {
-    let time: ContinuousClock.Instant
-    let watts: Double
+public struct PowerSample: Sendable {
+    public let time: ContinuousClock.Instant
+    public let watts: Double
+
+    public init(time: ContinuousClock.Instant, watts: Double) {
+        self.time = time
+        self.watts = watts
+    }
 }
 
-struct HistoryStats: Sendable {
-    let average: Double
-    let peak: Double
+public struct HistoryStats: Sendable {
+    public let average: Double
+    public let peak: Double
 }
 
 /// Whether the SMC total and the IOReport component counters agree closely
 /// enough for the residual between them to mean anything.
-enum RestVerdict: Equatable, Sendable {
+public enum RestVerdict: Equatable, Sendable {
     /// The components fit under the system total; `rest` is the residual,
     /// clamped at zero.
     case coherent(rest: Double)
@@ -45,18 +67,18 @@ enum RestVerdict: Equatable, Sendable {
 
 /// Pure power arithmetic: no hardware access, no state. Everything here is a
 /// function of its arguments, which is what makes it testable.
-enum PowerMath {
-    static let componentOrder = [
+public enum PowerMath {
+    public static let componentOrder = [
         "CPU", "GPU", "Neural Engine", "Memory", "Display", "Media Engine", "Fabric & I/O",
     ]
 
     /// Weight cap per history sample, so the gap across a system sleep doesn't
     /// let one stale reading dominate the average.
-    static let maxSampleWeight = 30.0
+    public static let maxSampleWeight = 30.0
 
     /// How far the component sum may exceed the system total before the two
     /// readings are treated as incoherent rather than as a negative residual.
-    static let coherenceTolerance = 0.25
+    public static let coherenceTolerance = 0.25
 
     /// Buckets Energy Model channels into display components using
     /// mactop-style matching: substring/prefix rules that sum multiple
@@ -68,7 +90,7 @@ enum PowerMath {
     /// Per-cluster CPU channels (PCPU/MCPU/MCPM and their SRAM variants) are
     /// deliberately unmatched: "CPU Energy" already covers them, and matching
     /// both would double-count.
-    static func bucketComponents(_ samples: [ComponentSample]) -> [String: Double] {
+    public static func bucketComponents(_ samples: [ComponentSample]) -> [String: Double] {
         var watts: [String: Double] = [:]
         var bareCPU: Double?
         var bareGPU: Double?
@@ -108,7 +130,7 @@ enum PowerMath {
     /// lets the components sum above the total. The endpoint average of two
     /// consecutive instantaneous totals is the natural estimate of the mean
     /// over the interval between them.
-    static func intervalAverage(current: Double?, previous: Double?) -> Double? {
+    public static func intervalAverage(current: Double?, previous: Double?) -> Double? {
         guard let current else { return nil }
         guard let previous else { return current }
         return (current + previous) / 2
@@ -118,7 +140,7 @@ enum PowerMath {
     /// NAND, radios, speakers, fans, and power-conversion losses. Only
     /// meaningful when the two sources agree; past the tolerance they are
     /// describing different moments and the residual is noise.
-    static func reconcileRest(
+    public static func reconcileRest(
         componentSum: Double,
         intervalSystemWatts: Double,
         tolerance: Double = coherenceTolerance
@@ -132,7 +154,7 @@ enum PowerMath {
     /// over the last hour. A percentile rather than the minimum, so a single
     /// noisy dip (the SMC total and the energy counters are sampled at
     /// slightly different moments) doesn't drag the floor down.
-    static func restFloor(_ residuals: [Double]) -> Double? {
+    public static func restFloor(_ residuals: [Double]) -> Double? {
         guard !residuals.isEmpty else { return nil }
         let sorted = residuals.sorted()
         return sorted[Int(Double(sorted.count - 1) * 0.1)]
@@ -148,7 +170,7 @@ enum PowerMath {
     ///
     /// Capped at the interval-aligned system total, so per-app attribution
     /// can never exceed the headline.
-    static func attributableBudget(
+    public static func attributableBudget(
         components: [PowerReading],
         restFloor: Double?,
         intervalSystemWatts: Double?
@@ -174,7 +196,7 @@ enum PowerMath {
     /// section adds up to the system total: the fixed Rest of System floor,
     /// GPU/ANE/media/display power, unreadable privileged processes, and apps
     /// below the display threshold.
-    static func appReadings(apps: [AppPower], intervalSystemWatts: Double?) -> [PowerReading] {
+    public static func appReadings(apps: [AppPower], intervalSystemWatts: Double?) -> [PowerReading] {
         var readings = apps.map { PowerReading(id: $0.name, label: $0.name, watts: $0.watts) }
         if let intervalSystemWatts {
             let attributed = apps.reduce(0) { $0 + $1.watts }
@@ -190,7 +212,7 @@ enum PowerMath {
     /// weighted by the gap to the next one so mixed update intervals average
     /// correctly; the last sample is weighted by the current update interval
     /// since its own interval has not elapsed yet.
-    static func historyStats(
+    public static func historyStats(
         _ samples: [PowerSample],
         trailingWeight: Double,
         maxSampleWeight: Double = maxSampleWeight
@@ -215,7 +237,7 @@ enum PowerMath {
     }
 
     /// Drops samples older than `window`, in place.
-    static func trim(_ samples: inout [PowerSample], before cutoff: ContinuousClock.Instant) {
+    public static func trim(_ samples: inout [PowerSample], before cutoff: ContinuousClock.Instant) {
         if let firstValid = samples.firstIndex(where: { $0.time >= cutoff }) {
             samples.removeFirst(firstValid)
         }

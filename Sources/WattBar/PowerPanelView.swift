@@ -1,5 +1,6 @@
 import Charts
 import SwiftUI
+import WattBarCore
 
 struct PowerPanelView: View {
     @Bindable var monitor: PowerMonitor

@@ -1,16 +1,10 @@
 import Darwin
 import Foundation
+import WattBarCore
 
-/// Estimates per-app power with a budget model: a caller-supplied watt
-/// budget (the activity-driven share of system power) is distributed
-/// across apps in proportion to each one's share of machine-wide CPU
-/// time since the previous sample.
-///
-/// Per-process CPU time covers every readable process — including bare CLI
-/// children like compilers, which the kernel's billed-energy counter misses
-/// entirely. Time spent in processes we cannot read (root daemons, kernel)
-/// keeps its share of the budget unattributed rather than being smeared
-/// across apps; the caller reports it as part of the remainder.
+/// Gathers the inputs `AppPowerAttributor` needs — an all-process sweep, the
+/// machine-wide busy-tick counter, and process names — and hands them over.
+/// Everything here is a syscall; the arithmetic lives in the core.
 final class AppPowerSampler {
     /// Converts ri_user_time/ri_system_time mach time units to seconds.
     private static let machToSeconds: Double = {
@@ -22,123 +16,30 @@ final class AppPowerSampler {
     /// host_processor_info tick rate (ticks per second, typically 100).
     private static let ticksPerSecond = Double(sysconf(_SC_CLK_TCK))
 
-    private struct ProcSnapshot {
-        /// user + system time, mach time units
-        let ownTime: UInt64
-        /// reaped children's accumulated time, mach time units
-        let childTime: UInt64
-        let parent: pid_t
-    }
+    private let attributor = AppPowerAttributor(
+        machToSeconds: machToSeconds, ticksPerSecond: ticksPerSecond
+    )
 
-    private var previousProcs: [pid_t: ProcSnapshot] = [:]
-    private var previousBusyTicks: UInt64?
-    private var previousSweepTime: ContinuousClock.Instant?
-    /// Seconds already attributed to processes that have since exited, keyed
-    /// by parent pid. Subtracted from the parent's child-counter delta so a
-    /// child counted while alive isn't counted again when reaped.
-    private var deadChildCredits: [pid_t: Double] = [:]
-    private var nameCache: [pid_t: String] = [:]
-
-    /// Discards history so the next sample() is a fresh baseline rather than
-    /// an average over however long sampling was paused. The name cache goes
-    /// too: while sampling was paused a process can have exited and its pid
-    /// been reused, which would otherwise give the new process the old app's
-    /// name. (While sampling is live, the per-sweep pruning below handles it.)
     func reset() {
-        previousProcs.removeAll(keepingCapacity: true)
-        previousBusyTicks = nil
-        previousSweepTime = nil
-        deadChildCredits.removeAll(keepingCapacity: true)
-        nameCache.removeAll(keepingCapacity: true)
+        attributor.reset()
     }
 
     /// Distributes `budgetWatts` across the top apps by CPU-time share.
     /// Returns nil on the first call after a reset (no interval to compare
     /// against) or when `budgetWatts` is unavailable.
     func sample(budgetWatts: Double?, topCount: Int) -> [AppPower]? {
-        let procs = sweepProcs()
-        let busyTicks = Self.totalBusyTicks()
-        let now = ContinuousClock.now
-
-        defer {
-            previousProcs = procs
-            previousBusyTicks = busyTicks
-            previousSweepTime = now
-            nameCache = nameCache.filter { procs[$0.key] != nil }
-            deadChildCredits = deadChildCredits.filter {
-                procs[$0.key] != nil && $0.value > 0.001
-            }
-        }
-
-        guard let previousBusyTicks, busyTicks > previousBusyTicks,
-              let previousSweepTime,
-              let budgetWatts
-        else { return nil }
-        let busySeconds = Double(busyTicks - previousBusyTicks) / Self.ticksPerSecond
-
-        // Physical ceiling on the CPU time attributable to one process in
-        // the window; guards new-pid attribution against pid reuse.
-        let wallSeconds = previousSweepTime.duration(to: now).timeInterval
-        let maxWindowSeconds = wallSeconds
-            * Double(ProcessInfo.processInfo.activeProcessorCount)
-
-        // Everything already attributed to a now-dead process is about to
-        // reappear in its parent's child counters; record it as a credit.
-        for (pid, snapshot) in previousProcs where procs[pid] == nil {
-            let attributed = Double(snapshot.ownTime + snapshot.childTime)
-                * Self.machToSeconds
-            deadChildCredits[snapshot.parent, default: 0] += attributed
-        }
-
-        var secondsByApp: [String: Double] = [:]
-        var accountedSeconds = 0.0
-        for (pid, snapshot) in procs {
-            let ownSeconds: Double
-            var childSeconds: Double
-            if let previous = previousProcs[pid] {
-                ownSeconds = snapshot.ownTime > previous.ownTime
-                    ? Double(snapshot.ownTime - previous.ownTime) * Self.machToSeconds
-                    : 0
-                childSeconds = snapshot.childTime > previous.childTime
-                    ? Double(snapshot.childTime - previous.childTime) * Self.machToSeconds
-                    : 0
-            } else {
-                // First sighting: the process spawned after the previous
-                // sweep, so everything it (and any children it has already
-                // reaped) used accrued within this window. Matters a lot
-                // for short-lived workers like compilers.
-                ownSeconds = Double(snapshot.ownTime) * Self.machToSeconds
-                childSeconds = Double(snapshot.childTime) * Self.machToSeconds
-            }
-
-            // Child counters include reaped children we already counted
-            // while they were alive; spend the credit before attributing.
-            if childSeconds > 0, let credit = deadChildCredits[pid], credit > 0 {
-                let spent = min(credit, childSeconds)
-                childSeconds -= spent
-                deadChildCredits[pid] = credit - spent
-            }
-
-            let seconds = min(ownSeconds + childSeconds, maxWindowSeconds)
-            guard seconds > 0 else { continue }
-            secondsByApp[appName(for: pid), default: 0] += seconds
-            accountedSeconds += seconds
-        }
-
-        // The two clocks are sampled at slightly different moments; treat
-        // the larger as the true denominator so shares never exceed 1.
-        let totalSeconds = max(busySeconds, accountedSeconds)
-        guard totalSeconds > 0 else { return nil }
-
-        return secondsByApp
-            .map { AppPower(name: $0.key, watts: budgetWatts * $0.value / totalSeconds) }
-            .filter { $0.watts >= 0.01 }
-            .sorted { $0.watts > $1.watts }
-            .prefix(topCount)
-            .map { $0 }
+        attributor.attribute(
+            procs: sweepProcs(),
+            busyTicks: Self.totalBusyTicks(),
+            now: .now,
+            processorCount: ProcessInfo.processInfo.activeProcessorCount,
+            budgetWatts: budgetWatts,
+            topCount: topCount,
+            name: Self.appName(for:)
+        )
     }
 
-    private func sweepProcs() -> [pid_t: ProcSnapshot] {
+    private func sweepProcs() -> [pid_t: ProcSample] {
         let pidCount = proc_listallpids(nil, 0)
         guard pidCount > 0 else { return [:] }
         var pids = [pid_t](repeating: 0, count: Int(pidCount) * 2)
@@ -146,7 +47,7 @@ final class AppPowerSampler {
             proc_listallpids($0.baseAddress, Int32($0.count))
         }
 
-        var procs: [pid_t: ProcSnapshot] = [:]
+        var procs: [pid_t: ProcSample] = [:]
         procs.reserveCapacity(Int(filled))
         for pid in pids.prefix(Int(max(filled, 0))) where pid > 0 {
             var usage = rusage_info_current()
@@ -163,7 +64,7 @@ final class AppPowerSampler {
                 pid, PROC_PIDT_SHORTBSDINFO, 0, &shortInfo, shortSize
             ) == shortSize ? pid_t(shortInfo.pbsi_ppid) : 0
 
-            procs[pid] = ProcSnapshot(
+            procs[pid] = ProcSample(
                 ownTime: usage.ri_user_time + usage.ri_system_time,
                 childTime: usage.ri_child_user_time + usage.ri_child_system_time,
                 parent: parent
@@ -202,23 +103,20 @@ final class AppPowerSampler {
 
     /// Groups a process under its outermost .app bundle, so helpers and
     /// bundled tools (e.g. Xcode's compilers) roll up into their parent app.
-    private func appName(for pid: pid_t) -> String {
-        if let cached = nameCache[pid] { return cached }
+    private static func appName(for pid: pid_t) -> String {
         var buffer = [CChar](repeating: 0, count: 4096)
-        var name = "Unknown"
-        if proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 {
-            let length = buffer.firstIndex(of: 0) ?? buffer.count
-            let path = buffer[..<length].withUnsafeBytes {
-                String(decoding: $0, as: UTF8.self)
-            }
-            let components = path.split(separator: "/")
-            if let bundle = components.first(where: { $0.hasSuffix(".app") }) {
-                name = String(bundle.dropLast(4))
-            } else if let executable = components.last {
-                name = String(executable)
-            }
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return "Unknown" }
+        let length = buffer.firstIndex(of: 0) ?? buffer.count
+        let path = buffer[..<length].withUnsafeBytes {
+            String(decoding: $0, as: UTF8.self)
         }
-        nameCache[pid] = name
-        return name
+        let components = path.split(separator: "/")
+        if let bundle = components.first(where: { $0.hasSuffix(".app") }) {
+            return String(bundle.dropLast(4))
+        }
+        if let executable = components.last {
+            return String(executable)
+        }
+        return "Unknown"
     }
 }
