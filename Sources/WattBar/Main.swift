@@ -3,9 +3,9 @@ import Foundation
 @main
 @MainActor
 enum Main {
-    static func main() {
+    static func main() async {
         if CommandLine.arguments.contains("--probe") {
-            probe()
+            await probe()
             return
         }
         if CommandLine.arguments.contains("--dump") {
@@ -17,11 +17,11 @@ enum Main {
             return
         }
         if CommandLine.arguments.contains("--apps") {
-            apps()
+            await apps()
             return
         }
         if CommandLine.arguments.contains("--components") {
-            components()
+            await components()
             return
         }
         LaunchAtLogin.registerIfNeeded()
@@ -30,7 +30,7 @@ enum Main {
 
     /// Prints one reading of every power channel and exits. Lets the SMC
     /// layer be verified from the command line: `WattBar --probe`
-    private static func probe() {
+    private static func probe() async {
         guard let smc = SMC() else {
             print("error: could not open AppleSMC connection")
             exit(1)
@@ -65,7 +65,7 @@ enum Main {
             return
         }
         _ = energy.sample()
-        Thread.sleep(forTimeInterval: 1.0)
+        try? await Task.sleep(for: .seconds(1))
         for component in energy.sample() ?? [] {
             print("\(component.name): \(String(format: "%.2f", component.watts)) W")
         }
@@ -79,40 +79,57 @@ enum Main {
         print("autoRegistered:", UserDefaults.standard.bool(forKey: "didAutoRegisterLoginItem"))
     }
 
+    private static let cliTopCount = 6
+    private static let cliWindow: Duration = .seconds(2)
+
     /// Prints estimated per-app power over a 2-second window, using the
     /// same budget-and-remainder path as the panel: `WattBar --apps`
-    private static func apps() {
-        let monitor = PowerMonitor()
-        monitor.stop()
-        monitor.isPanelVisible = true
-        Thread.sleep(forTimeInterval: 2.0)
-        monitor.refresh()
-        guard monitor.hasAppSample else {
+    private static func apps() async {
+        let sampler = SensorSampler()
+        await sampler.resetAppBaseline(topCount: cliTopCount)
+        _ = await sampler.snapshot(includeApps: true, topCount: cliTopCount)
+        try? await Task.sleep(for: cliWindow)
+        let snapshot = await sampler.snapshot(includeApps: true, topCount: cliTopCount)
+
+        guard let apps = snapshot.apps else {
             print("error: no sample")
             exit(1)
         }
-        print("System total:", monitor.statusText)
-        for reading in monitor.appReadings {
+        printTotals(snapshot)
+        for reading in PowerMath.appReadings(
+            apps: apps, intervalSystemWatts: snapshot.intervalSystemWatts
+        ) {
             print(String(format: "%6.2f W  %@", reading.watts, reading.label))
         }
     }
 
     /// Prints the bucketed component breakdown exactly as the panel computes
     /// it, including the Rest of System residual: `WattBar --components`
-    private static func components() {
-        let monitor = PowerMonitor()
-        monitor.stop()
-        Thread.sleep(forTimeInterval: 2.0)
-        monitor.refresh()
-        guard monitor.isAvailable else {
+    private static func components() async {
+        let sampler = SensorSampler()
+        _ = await sampler.snapshot(includeApps: false, topCount: cliTopCount)
+        try? await Task.sleep(for: cliWindow)
+        let snapshot = await sampler.snapshot(includeApps: false, topCount: cliTopCount)
+
+        guard snapshot.isAvailable else {
             print("error: power sensors unavailable")
             exit(1)
         }
-        print("System total:", monitor.statusText)
-        for reading in monitor.components {
+        printTotals(snapshot)
+        for reading in snapshot.components ?? [] {
             let detail = reading.detail.map { "  (\($0))" } ?? ""
             print(String(format: "%6.2f W  %@%@", reading.watts, reading.label, detail))
         }
+    }
+
+    /// The rows below sum to the interval-aligned total, not the instantaneous
+    /// one: the energy counters they come from are averages over the window.
+    private static func printTotals(_ snapshot: PowerSnapshot) {
+        let format = { (value: Double?) in
+            value.map { String(format: "%.2f W", $0) } ?? "unavailable"
+        }
+        print("System total (now):", format(snapshot.systemWatts))
+        print("System total (interval):", format(snapshot.intervalSystemWatts))
     }
 
     /// Prints every float-typed "P*" (power) sensor the SMC exposes:

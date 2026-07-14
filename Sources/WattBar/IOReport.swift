@@ -38,11 +38,6 @@ private func IOReportSimpleGetIntegerValue(_ channel: CFDictionary, _ index: Int
 
 /// Samples the SoC energy counters and converts deltas to average watts.
 final class EnergyModel {
-    struct ComponentPower {
-        let name: String
-        let watts: Double
-    }
-
     private let subscription: CFTypeRef
     private let channels: CFMutableDictionary
     private var previousSample: CFDictionary?
@@ -65,7 +60,7 @@ final class EnergyModel {
 
     /// Returns average power per component since the previous call, or nil on
     /// the first call (no interval to average over yet).
-    func sample() -> [ComponentPower]? {
+    func sample() -> [ComponentSample]? {
         guard let current = IOReportCreateSamples(subscription, channels, nil)?
             .takeRetainedValue()
         else { return nil }
@@ -92,7 +87,10 @@ final class EnergyModel {
         let channelList = Unmanaged<CFArray>.fromOpaque(raw)
             .takeUnretainedValue() as [AnyObject]
 
-        return channelList.compactMap { entry in
+        return channelList.compactMap { entry -> ComponentSample? in
+            // CF casts are unchecked bridges, so `as?` would not reliably fail
+            // for a non-dictionary CF value; check the type ID instead.
+            guard CFGetTypeID(entry) == CFDictionaryGetTypeID() else { return nil }
             let channel = entry as! CFDictionary
             guard let name = IOReportChannelGetChannelName(channel)?
                 .takeUnretainedValue() as String?
@@ -100,18 +98,8 @@ final class EnergyModel {
             let unit = IOReportChannelGetUnitLabel(channel)
                 .map { ($0.takeUnretainedValue() as String) } ?? ""
             let value = IOReportSimpleGetIntegerValue(channel, 0)
-            guard let joules = Self.joules(value: value, unit: unit) else { return nil }
-            return ComponentPower(name: name, watts: joules / seconds)
-        }
-    }
-
-    private static func joules(value: Int64, unit: String) -> Double? {
-        switch unit.trimmingCharacters(in: .whitespaces) {
-        case "nJ": Double(value) / 1e9
-        case "uJ", "µJ": Double(value) / 1e6
-        case "mJ": Double(value) / 1e3
-        case "J": Double(value)
-        default: nil
+            guard let joules = IOReportUnits.joules(value: value, unit: unit) else { return nil }
+            return ComponentSample(name: name, watts: joules / seconds)
         }
     }
 }

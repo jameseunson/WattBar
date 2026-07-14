@@ -12,11 +12,6 @@ import Foundation
 /// keeps its share of the budget unattributed rather than being smeared
 /// across apps; the caller reports it as part of the remainder.
 final class AppPowerSampler {
-    struct AppPower {
-        let name: String
-        let watts: Double
-    }
-
     /// Converts ri_user_time/ri_system_time mach time units to seconds.
     private static let machToSeconds: Double = {
         var timebase = mach_timebase_info_data_t()
