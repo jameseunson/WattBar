@@ -7,6 +7,7 @@ struct PowerPanelView: View {
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var launchAtLoginError: String?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -161,6 +162,11 @@ struct PowerPanelView: View {
     the last set of rows that added up, alongside the total they add up to.
     """
 
+    private static let staleTotalHelp = """
+    The sensors briefly disagreed, so these are the last rows that added up, \
+    shown against the total they add up to rather than the current one.
+    """
+
     @ViewBuilder
     private var componentSection: some View {
         if let breakdown = monitor.componentBreakdown, !breakdown.readings.isEmpty {
@@ -171,15 +177,34 @@ struct PowerPanelView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(String(format: "avg %.1f W", breakdown.totalWatts))
-                        .font(.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(breakdown.isStale ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
-                        .help(Self.componentTotalHelp)
+                    componentTotal(breakdown)
                 }
                 readingGrid(breakdown.readings)
             }
         }
+    }
+
+    /// Staleness dims the total, but dimming is the weakest of the three
+    /// signals here: it also earns a symbol when colour and contrast are not
+    /// to be relied on, and it is spoken as part of the accessibility value.
+    private func componentTotal(_ breakdown: ComponentBreakdown) -> some View {
+        HStack(spacing: 3) {
+            if breakdown.isStale && differentiateWithoutColor {
+                Image(systemName: "clock.badge.exclamationmark")
+            }
+            Text(String(format: "avg %.1f W", breakdown.totalWatts))
+                .monospacedDigit()
+        }
+        .font(.caption)
+        .foregroundStyle(breakdown.isStale ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
+        .help(Self.componentTotalHelp)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Components total")
+        .accessibilityValue(
+            String(format: "average %.1f watts", breakdown.totalWatts)
+                + (breakdown.isStale ? ", stale" : "")
+        )
+        .accessibilityHint(breakdown.isStale ? Self.staleTotalHelp : Self.componentTotalHelp)
     }
 
     @ViewBuilder

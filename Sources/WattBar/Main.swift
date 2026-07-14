@@ -122,11 +122,22 @@ enum Main {
             let detail = reading.detail.map { "  (\($0))" } ?? ""
             print(String(format: "%6.2f W  %@%@", reading.watts, reading.label, detail))
         }
-        // Printed from the breakdown, not the snapshot: the rows above always
-        // sum to this number, even when the current interval was incoherent
-        // and these are the last rows that added up.
+        // Printed from the breakdown, not the snapshot: the rows above sum to
+        // this number, even when the current interval was incoherent and these
+        // are the last rows that added up.
         let marker = breakdown.isStale ? "  (stale)" : ""
         print(String(format: "Components total: %.2f W%@", breakdown.totalWatts, marker))
+        // They sum to it exactly only when a Rest of System row was worth
+        // emitting. When it wasn't, the leftover is still real, and at two
+        // decimals it is large enough to read as an arithmetic error. Name it,
+        // with the reason matched to its sign.
+        let unattributed = breakdown.unattributedWatts
+        if abs(unattributed) >= 0.005 {
+            let reason = unattributed > 0
+                ? "too small for a Rest of System row"
+                : "rows overshot the total within tolerance"
+            print(String(format: "  (%+.2f W residual, %@)", unattributed, reason))
+        }
     }
 
     /// The rows below sum to the interval-aligned total, not the instantaneous

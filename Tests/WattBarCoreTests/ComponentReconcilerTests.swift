@@ -74,7 +74,7 @@ struct ComponentReconcilerTests {
         #expect(next.breakdown == nil)
     }
 
-    @Test("a residual below the threshold gets no Rest of System row, but still feeds the floor")
+    @Test("a residual below the threshold gets no Rest of System row, but is still reported and still feeds the floor")
     func negligibleRestIsOmitted() {
         var reconciler = ComponentReconciler()
         let outcome = reconciler.reconcile(readings: rows(20), intervalSystemWatts: 20.03)
@@ -82,6 +82,34 @@ struct ComponentReconcilerTests {
         #expect(breakdown.readings.contains { $0.id == "_rest" } == false)
         #expect(breakdown.totalWatts == 20.03)
         #expect(abs((outcome.coherentRest ?? 0) - 0.03) < 1e-9)
+        // The rows are short of the total by exactly the row that was dropped:
+        // the only slack the "rows sum to the total" invariant allows.
+        #expect(abs(breakdown.unattributedWatts - 0.03) < 1e-9)
+    }
+
+    /// 0.05 has no exact binary representation, so a total of "restThreshold"
+    /// against empty readings is the one subtraction that lands on the
+    /// threshold's own Double: `intervalSystemWatts - 0` is the same value.
+    /// That pins which side of the boundary is inclusive.
+    @Test("a residual of exactly the threshold is omitted; the next value above it earns a row")
+    func restThresholdBoundaryIsExclusive() {
+        var reconciler = ComponentReconciler()
+        let threshold = ComponentReconciler.restThreshold
+
+        let atThreshold = reconciler.reconcile(readings: [], intervalSystemWatts: threshold)
+        let omitted = try! #require(atThreshold.breakdown)
+        #expect(omitted.readings.isEmpty)
+        #expect(omitted.unattributedWatts == threshold)
+        #expect(atThreshold.coherentRest == threshold)
+
+        let aboveThreshold = reconciler.reconcile(
+            readings: [], intervalSystemWatts: threshold.nextUp
+        )
+        let emitted = try! #require(aboveThreshold.breakdown)
+        #expect(emitted.readings.map(\.id) == ["_rest"])
+        #expect(emitted.readings.first?.watts == threshold.nextUp)
+        // With the row present, nothing is left over: the invariant is exact.
+        #expect(emitted.unattributedWatts == 0)
     }
 
     @Test("a component sum just above the total is clamped, not treated as incoherent")
@@ -92,5 +120,8 @@ struct ComponentReconcilerTests {
         #expect(breakdown.isStale == false)
         #expect(breakdown.readings.contains { $0.id == "_rest" } == false)
         #expect(outcome.coherentRest == 0)
+        // The other direction the invariant can be inexact: the rows overshoot
+        // the total, and the clamp leaves that overshoot unaccounted for.
+        #expect(abs(breakdown.unattributedWatts + 0.2) < 1e-9)
     }
 }
