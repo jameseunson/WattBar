@@ -33,7 +33,7 @@ struct PowerPanelView: View {
                     sparkline
                 }
 
-                readingSection("Components", readings: monitor.components)
+                componentSection
                 appSection
                 readingSection("Power Source", readings: monitor.sources)
             } else {
@@ -149,6 +149,36 @@ struct PowerPanelView: View {
         case .serious: .orange
         case .critical: .red
         @unknown default: .gray
+        }
+    }
+
+    private static let componentTotalHelp = """
+    The rows below are averages over the update interval and add up to this \
+    number, which is why they can differ a little from the instantaneous \
+    figure at the top.
+
+    A dimmed total means the sensors briefly disagreed, so WattBar is showing \
+    the last set of rows that added up, alongside the total they add up to.
+    """
+
+    @ViewBuilder
+    private var componentSection: some View {
+        if let breakdown = monitor.componentBreakdown, !breakdown.readings.isEmpty {
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Components")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(String(format: "avg %.1f W", breakdown.totalWatts))
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(breakdown.isStale ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
+                        .help(Self.componentTotalHelp)
+                }
+                readingGrid(breakdown.readings)
+            }
         }
     }
 

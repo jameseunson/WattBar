@@ -117,10 +117,16 @@ enum Main {
             exit(1)
         }
         printTotals(snapshot)
-        for reading in snapshot.components ?? [] {
+        guard let breakdown = snapshot.components else { return }
+        for reading in breakdown.readings {
             let detail = reading.detail.map { "  (\($0))" } ?? ""
             print(String(format: "%6.2f W  %@%@", reading.watts, reading.label, detail))
         }
+        // Printed from the breakdown, not the snapshot: the rows above always
+        // sum to this number, even when the current interval was incoherent
+        // and these are the last rows that added up.
+        let marker = breakdown.isStale ? "  (stale)" : ""
+        print(String(format: "Components total: %.2f W%@", breakdown.totalWatts, marker))
     }
 
     /// The rows below sum to the interval-aligned total, not the instantaneous

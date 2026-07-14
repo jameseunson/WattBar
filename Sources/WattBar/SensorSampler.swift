@@ -12,7 +12,7 @@ struct PowerSnapshot: Sendable {
     let sources: [PowerReading]
     /// nil when the energy counters had no interval to average over yet, in
     /// which case the caller keeps its previous breakdown.
-    let components: [PowerReading]?
+    let components: ComponentBreakdown?
     /// nil when apps were not sampled, or when there was no interval to
     /// compare against yet.
     let apps: [AppPower]?
@@ -43,10 +43,9 @@ actor SensorSampler {
     /// Last breakdown produced, so the app budget survives a refresh where
     /// the energy counters had nothing new to report.
     private var lastComponents: [PowerReading] = []
-    /// Last breakdown that fit under the system total. Republished when the
-    /// two sources disagree, so the panel goes one interval stale rather than
-    /// flickering empty.
-    private var lastCoherentComponents: [PowerReading]?
+    /// The coherence state machine: decides whether this interval's rows can
+    /// be published or the last coherent set should be republished.
+    private var reconciler = ComponentReconciler()
     /// Rest of System residuals over the last hour, used to estimate the
     /// fixed part of that residual (backlight, SSD, radios) as a floor.
     private var restHistory: [PowerSample] = []
@@ -66,13 +65,15 @@ actor SensorSampler {
         )
         previousSystemWatts = systemWatts
 
-        var components: [PowerReading]?
+        var components: ComponentBreakdown?
         if let samples = energy?.sample() {
-            let readings = componentReadings(
+            let breakdown = componentReadings(
                 from: samples, intervalSystemWatts: intervalSystemWatts
             )
-            components = readings
-            lastComponents = readings
+            components = breakdown
+            if let breakdown {
+                lastComponents = breakdown.readings
+            }
         }
 
         var apps: [AppPower]?
@@ -127,11 +128,11 @@ actor SensorSampler {
 
     private func componentReadings(
         from samples: [ComponentSample], intervalSystemWatts: Double?
-    ) -> [PowerReading] {
+    ) -> ComponentBreakdown? {
         let watts = PowerMath.bucketComponents(samples)
         let cpuTemp = temperatures?.cpuCelsius
         let gpuTemp = temperatures?.gpuCelsius
-        var readings = PowerMath.componentOrder.compactMap { label in
+        let readings = PowerMath.componentOrder.compactMap { label in
             watts[label].map { value in
                 let temp = switch label {
                 case "CPU": cpuTemp
@@ -147,26 +148,13 @@ actor SensorSampler {
             }
         }
 
-        guard let intervalSystemWatts else { return readings }
-        let componentSum = readings.reduce(0) { $0 + $1.watts }
-        switch PowerMath.reconcileRest(
-            componentSum: componentSum, intervalSystemWatts: intervalSystemWatts
-        ) {
-        case .coherent(let rest):
+        let outcome = reconciler.reconcile(
+            readings: readings, intervalSystemWatts: intervalSystemWatts
+        )
+        if let rest = outcome.coherentRest {
             recordRest(rest)
-            if rest > 0.05 {
-                readings.append(
-                    PowerReading(id: "_rest", label: "Rest of System", watts: rest)
-                )
-            }
-            lastCoherentComponents = readings
-            return readings
-        case .incoherent:
-            // Publishing these rows would sum above the headline, and feeding
-            // the residual to the floor would drag it. Keep the last set that
-            // added up.
-            return lastCoherentComponents ?? []
         }
+        return outcome.breakdown
     }
 
     private func recordRest(_ watts: Double) {

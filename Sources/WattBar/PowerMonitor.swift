@@ -21,7 +21,10 @@ final class PowerMonitor {
     private(set) var peakWatts: Double?
     private(set) var thermalState: ProcessInfo.ThermalState = .nominal
     private(set) var chartPoints: [ChartPoint] = []
-    private(set) var components: [Reading] = []
+    /// The component rows and the interval total they add up to, as one value:
+    /// a stale breakdown is shown against the total it reconciles to, never
+    /// against a fresher one it does not.
+    private(set) var componentBreakdown: ComponentBreakdown?
     private(set) var sources: [Reading] = []
     private(set) var appReadings: [Reading] = []
     private(set) var hasAppSample = false
@@ -101,8 +104,8 @@ final class PowerMonitor {
         sources = snapshot.sources
         thermalState = ProcessInfo.processInfo.thermalState
 
-        if let components = snapshot.components {
-            self.components = components
+        if let breakdown = snapshot.components {
+            componentBreakdown = breakdown
         }
         if let apps = snapshot.apps {
             hasAppSample = true
