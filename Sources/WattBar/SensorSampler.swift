@@ -2,13 +2,19 @@ import Foundation
 import WattBarCore
 
 /// One complete reading of the machine, as a value that can cross actor
-/// boundaries. `systemWatts` stays instantaneous because the headline is a
-/// "right now" number; everything derived from the component counters uses
-/// `intervalSystemWatts` instead, since those counters are interval averages.
+/// boundaries. `systemWatts`, `chargeWatts`, and `sources` are means of the
+/// readings taken over the update interval, so they describe the same
+/// stretch of time and roughly add up; at a 1-second interval that is a
+/// single "right now" reading. Everything derived from the component
+/// counters uses `intervalSystemWatts` instead, which is aligned to exactly
+/// the window those counters average over.
 struct PowerSnapshot: Sendable {
     let systemWatts: Double?
     let intervalSystemWatts: Double?
     let isAvailable: Bool
+    /// Power flowing into the battery; zero unless charging. Not part of
+    /// `systemWatts`, which is what the machine itself consumes.
+    let chargeWatts: Double
     let sources: [PowerReading]
     /// nil when the energy counters had no interval to average over yet, in
     /// which case the caller keeps its previous breakdown.
@@ -55,7 +61,21 @@ actor SensorSampler {
 
     private var resources: Resources?
 
-    /// Previous instantaneous system total, for interval alignment.
+    /// SMC and battery readings taken since the last snapshot. Each channel
+    /// fluctuates second to second and the SMC filters each on its own
+    /// schedule, so single readings of two channels can disagree by several
+    /// watts; their means over the interval agree.
+    private struct ChannelReadings {
+        var system: [Double] = []
+        var sources: [String: [Double]] = [:]
+        var charge: [Double] = []
+        var isCharging = false
+    }
+
+    private var pending = ChannelReadings()
+
+    /// Last system-total reading of the previous interval, for interval
+    /// alignment.
     private var previousSystemWatts: Double?
     /// Last breakdown produced, so the app budget survives a refresh where
     /// the energy counters had nothing new to report.
@@ -66,6 +86,10 @@ actor SensorSampler {
     /// Rest of System residuals over the last hour, used to estimate the
     /// fixed part of that residual (backlight, SSD, radios) as a floor.
     private var restHistory: [PowerSample] = []
+    /// Whether the previous snapshot swept processes. When app sampling
+    /// resumes after a gap it rebaselines, rather than averaging its first
+    /// estimate over however long it was paused.
+    private var sampledAppsLastSnapshot = false
 
     init() {}
 
@@ -77,13 +101,36 @@ actor SensorSampler {
         return created
     }
 
+    /// Reads the SMC power channels and the battery gauge into the current
+    /// interval's readings. A handful of ioctls, so cheap enough to call
+    /// every second between snapshots.
+    func sampleChannels() {
+        let resources = loadResources()
+        if let watts = resources.smc?.readValue(key: "PSTR") {
+            pending.system.append(watts)
+        }
+        for channel in Self.sourceChannels {
+            if let watts = resources.smc?.readValue(key: channel.key) {
+                pending.sources[channel.key, default: []].append(watts)
+            }
+        }
+        if let state = resources.battery?.read() {
+            pending.charge.append(state.chargeWatts)
+            pending.isCharging = state.isCharging
+        }
+    }
+
     func snapshot(includeApps: Bool, topCount: Int) -> PowerSnapshot {
         let resources = loadResources()
-        let systemWatts = resources.smc?.readValue(key: "PSTR")
+        sampleChannels()
+        let readings = pending
+        pending = ChannelReadings()
+
+        let systemWatts = PowerMath.mean(readings.system)
         let intervalSystemWatts = PowerMath.intervalAverage(
-            current: systemWatts, previous: previousSystemWatts
+            readings: readings.system, previous: previousSystemWatts
         )
-        previousSystemWatts = systemWatts
+        previousSystemWatts = readings.system.last ?? previousSystemWatts
 
         var components: ComponentBreakdown?
         if let samples = resources.energy?.sample() {
@@ -100,6 +147,9 @@ actor SensorSampler {
 
         var apps: [AppPower]?
         if includeApps {
+            if !sampledAppsLastSnapshot {
+                resources.appSampler.reset()
+            }
             let budget = PowerMath.attributableBudget(
                 components: lastComponents,
                 restFloor: PowerMath.restFloor(restHistory.map(\.watts)),
@@ -107,12 +157,15 @@ actor SensorSampler {
             )
             apps = resources.appSampler.sample(budgetWatts: budget, topCount: topCount)
         }
+        sampledAppsLastSnapshot = includeApps
 
+        let chargeWatts = PowerMath.mean(readings.charge) ?? 0
         return PowerSnapshot(
             systemWatts: systemWatts,
             intervalSystemWatts: intervalSystemWatts,
             isAvailable: systemWatts != nil,
-            sources: readSources(resources),
+            chargeWatts: chargeWatts,
+            sources: sources(from: readings, chargeWatts: chargeWatts),
             components: components,
             apps: apps
         )
@@ -125,11 +178,12 @@ actor SensorSampler {
         let resources = loadResources()
         resources.appSampler.reset()
         _ = resources.appSampler.sample(budgetWatts: nil, topCount: topCount)
+        sampledAppsLastSnapshot = true
     }
 
-    private func readSources(_ resources: Resources) -> [PowerReading] {
+    private func sources(from readings: ChannelReadings, chargeWatts: Double) -> [PowerReading] {
         var sources = Self.sourceChannels.compactMap { channel in
-            resources.smc?.readValue(key: channel.key).map {
+            PowerMath.mean(readings.sources[channel.key] ?? []).map {
                 PowerReading(id: channel.key, label: channel.label, watts: $0)
             }
         }
@@ -137,12 +191,12 @@ actor SensorSampler {
         // While charging, PPBR (power drawn from the battery) reads near
         // zero, leaving the adapter's extra output unexplained. Show the
         // charge inflow instead, flagged so the panel can annotate it.
-        if let state = resources.battery?.read(), state.isCharging,
+        if readings.isCharging,
            let index = sources.firstIndex(where: { $0.id == "PPBR" }) {
             sources[index] = PowerReading(
                 id: "PPBR",
                 label: "Battery",
-                watts: state.chargeWatts,
+                watts: chargeWatts,
                 detail: "charging"
             )
         }
